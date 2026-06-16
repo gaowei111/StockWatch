@@ -50,6 +50,7 @@ struct StockRowView: View {
         .padding(.vertical, 6)
         .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
         }

@@ -5,6 +5,13 @@ struct WatchlistView: View {
     @EnvironmentObject private var store: WatchlistStore
     @State private var groupNameDraft = ""
     @State private var isRenamingGroup = false
+    @State private var dragState: StockRowDragState?
+
+    private let stockRowHeight: CGFloat = 40
+    private let stockRowSpacing: CGFloat = 2
+    private var stockRowStep: CGFloat {
+        stockRowHeight + stockRowSpacing
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -198,31 +205,6 @@ struct WatchlistView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
     }
 
-    private var listContent: some View {
-        Group {
-            if store.symbols.isEmpty {
-                emptyState
-            } else {
-                List {
-                    ForEach(store.symbols) { symbol in
-                        StockRowView(
-                            symbol: symbol,
-                            quote: store.quotes[symbol.id],
-                            trend: store.trends[symbol.id] ?? [],
-                            discreetMode: store.discreetMode
-                        ) {
-                            store.remove(symbol)
-                        }
-                        .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
-                    }
-                    .onMove(perform: store.move)
-                }
-                .listStyle(.plain)
-                .frame(minHeight: 145, idealHeight: 210, maxHeight: 310)
-            }
-        }
-    }
-
     private var emptyState: some View {
         VStack(spacing: 6) {
             Image(systemName: "chart.line.uptrend.xyaxis")
@@ -247,11 +229,117 @@ struct WatchlistView: View {
             }
 
             Spacer()
-            Text("12s")
+            Text(store.refreshStatusText)
                 .foregroundStyle(.tertiary)
         }
         .font(.system(size: 10))
         .padding(.horizontal, 14)
         .frame(height: 22)
     }
+
+    private var listContent: some View {
+        Group {
+            if store.symbols.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: stockRowSpacing) {
+                        ForEach(store.symbols) { symbol in
+                            StockRowView(
+                                symbol: symbol,
+                                quote: store.quotes[symbol.id],
+                                trend: store.trends[symbol.id] ?? [],
+                                discreetMode: store.discreetMode
+                            ) {
+                                store.remove(symbol)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(height: stockRowHeight)
+                            .offset(y: rowOffset(for: symbol))
+                            .opacity(dragState?.symbolID == symbol.id ? 0.92 : 1)
+                            .shadow(
+                                color: dragState?.symbolID == symbol.id ? Color.black.opacity(0.12) : .clear,
+                                radius: 5,
+                                x: 0,
+                                y: 2
+                            )
+                            .zIndex(dragState?.symbolID == symbol.id ? 1 : 0)
+                            .gesture(rowDragGesture(for: symbol))
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .animation(.easeInOut(duration: 0.12), value: dragState?.targetIndex)
+                }
+                .frame(minHeight: 145, idealHeight: 210, maxHeight: 310)
+            }
+        }
+    }
+
+    private func rowDragGesture(for symbol: StockSymbol) -> some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                guard let currentIndex = store.symbols.firstIndex(where: { $0.id == symbol.id }) else {
+                    return
+                }
+
+                let startIndex: Int
+                if let dragState, dragState.symbolID == symbol.id {
+                    startIndex = dragState.startIndex
+                } else {
+                    startIndex = currentIndex
+                }
+
+                let offset = Int((value.translation.height / stockRowStep).rounded())
+                let targetIndex = min(max(startIndex + offset, 0), store.symbols.count - 1)
+                dragState = StockRowDragState(
+                    symbolID: symbol.id,
+                    startIndex: startIndex,
+                    targetIndex: targetIndex,
+                    translation: value.translation.height
+                )
+            }
+            .onEnded { _ in
+                if let dragState, dragState.symbolID == symbol.id {
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        _ = store.move(symbolID: symbol.id, to: dragState.targetIndex)
+                    }
+                }
+
+                dragState = nil
+            }
+    }
+
+    private func rowOffset(for symbol: StockSymbol) -> CGFloat {
+        guard
+            let dragState,
+            let currentIndex = store.symbols.firstIndex(where: { $0.id == symbol.id })
+        else {
+            return 0
+        }
+
+        if symbol.id == dragState.symbolID {
+            return dragState.translation
+        }
+
+        if dragState.targetIndex > dragState.startIndex,
+           currentIndex > dragState.startIndex,
+           currentIndex <= dragState.targetIndex {
+            return -stockRowStep
+        }
+
+        if dragState.targetIndex < dragState.startIndex,
+           currentIndex >= dragState.targetIndex,
+           currentIndex < dragState.startIndex {
+            return stockRowStep
+        }
+
+        return 0
+    }
+}
+
+private struct StockRowDragState {
+    var symbolID: String
+    var startIndex: Int
+    var targetIndex: Int
+    var translation: CGFloat
 }

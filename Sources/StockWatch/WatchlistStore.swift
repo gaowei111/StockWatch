@@ -32,6 +32,7 @@ final class WatchlistStore: ObservableObject {
     @Published private(set) var isSearching = false
     @Published private(set) var searchSuggestions: [StockSymbol] = []
     @Published private(set) var errorMessage: String?
+    @Published private(set) var refreshStatusText = TradingRefreshSchedule.statusText(for: [])
 
     private let provider: QuoteProvider
     private let searchProvider: SymbolSearchProvider
@@ -59,6 +60,7 @@ final class WatchlistStore: ObservableObject {
         groups = Self.loadGroups(groupsKey: groupsKey, legacySymbolsKey: symbolsKey)
         selectedGroupID = Self.loadSelectedGroupID(key: selectedGroupIDKey, groups: groups)
         syncSymbolsFromSelectedGroup()
+        updateRefreshStatus()
         persistGroups()
     }
 
@@ -74,16 +76,31 @@ final class WatchlistStore: ObservableObject {
 
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
-                try? await Task.sleep(for: .seconds(12))
+                guard let self else {
+                    return
+                }
+
+                let delay = await self.scheduledRefreshCycle()
+                let nanoseconds = UInt64(delay * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
             }
         }
     }
 
     func refresh() async {
-        guard !symbols.isEmpty else {
-            quotes = [:]
-            trends = [:]
+        await refresh(symbolsToRefresh: symbols, replaceAll: true)
+    }
+
+    private func refresh(symbolsToRefresh: [StockSymbol], replaceAll: Bool) async {
+        defer {
+            updateRefreshStatus()
+        }
+
+        guard !symbolsToRefresh.isEmpty else {
+            if replaceAll {
+                quotes = [:]
+                trends = [:]
+            }
             return
         }
 
@@ -93,9 +110,21 @@ final class WatchlistStore: ObservableObject {
         }
 
         do {
-            let fetchedQuotes = try await provider.fetchQuotes(for: symbols)
-            quotes = Dictionary(uniqueKeysWithValues: fetchedQuotes.map { ($0.symbol.id, $0) })
-            trends = await trendProvider.fetchTrends(for: symbols)
+            let fetchedQuotes = try await provider.fetchQuotes(for: symbolsToRefresh)
+            let fetchedTrends = await trendProvider.fetchTrends(for: symbolsToRefresh)
+
+            if replaceAll {
+                quotes = Dictionary(uniqueKeysWithValues: fetchedQuotes.map { ($0.symbol.id, $0) })
+                trends = fetchedTrends
+            } else {
+                for quote in fetchedQuotes {
+                    quotes[quote.symbol.id] = quote
+                }
+
+                for (id, trend) in fetchedTrends {
+                    trends[id] = trend
+                }
+            }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -106,6 +135,7 @@ final class WatchlistStore: ObservableObject {
         selectedGroupID = group.id
         UserDefaults.standard.set(group.id.uuidString, forKey: selectedGroupIDKey)
         syncSymbolsFromSelectedGroup()
+        updateRefreshStatus()
         Task {
             await refresh()
         }
@@ -130,6 +160,7 @@ final class WatchlistStore: ObservableObject {
             UserDefaults.standard.set(id.uuidString, forKey: selectedGroupIDKey)
         }
         syncSymbolsFromSelectedGroup()
+        updateRefreshStatus()
         persistGroups()
         Task {
             await refresh()
@@ -227,6 +258,7 @@ final class WatchlistStore: ObservableObject {
         searchSuggestions = []
         errorMessage = nil
         persistCurrentSymbols()
+        updateRefreshStatus()
         await refresh()
     }
 
@@ -235,11 +267,28 @@ final class WatchlistStore: ObservableObject {
         quotes.removeValue(forKey: symbol.id)
         trends.removeValue(forKey: symbol.id)
         persistCurrentSymbols()
+        updateRefreshStatus()
     }
 
     func move(from source: IndexSet, to destination: Int) {
         symbols.move(fromOffsets: source, toOffset: destination)
         persistCurrentSymbols()
+    }
+
+    @discardableResult
+    func move(symbolID: String, to targetIndex: Int) -> Bool {
+        guard
+            let fromIndex = symbols.firstIndex(where: { $0.id == symbolID }),
+            symbols.indices.contains(targetIndex),
+            fromIndex != targetIndex
+        else {
+            return false
+        }
+
+        let movedSymbol = symbols.remove(at: fromIndex)
+        symbols.insert(movedSymbol, at: min(targetIndex, symbols.count))
+        persistCurrentSymbols()
+        return true
     }
 
     private var currentGroupIndex: Int? {
@@ -248,6 +297,21 @@ final class WatchlistStore: ObservableObject {
         }
 
         return groups.firstIndex { $0.id == selectedGroupID }
+    }
+
+    private func scheduledRefreshCycle() async -> TimeInterval {
+        updateRefreshStatus()
+
+        let activeSymbols = TradingRefreshSchedule.activeSymbols(from: symbols)
+        if !activeSymbols.isEmpty {
+            await refresh(symbolsToRefresh: activeSymbols, replaceAll: false)
+        }
+
+        return TradingRefreshSchedule.nextDelay(for: symbols)
+    }
+
+    private func updateRefreshStatus() {
+        refreshStatusText = TradingRefreshSchedule.statusText(for: symbols)
     }
 
     private func shouldSearchSuggestions(for input: String) -> Bool {

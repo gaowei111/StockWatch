@@ -10,6 +10,7 @@ StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A
 - 支持代码添加，例如 `700`、`00700`、`HK.00700`、`600519`、`SZ.000001`。
 - 支持中文名称搜索联想，点击建议项即可加入当前分组。
 - 行内展示名称、代码、价格、涨跌幅和当天迷你走势线。
+- 自动刷新会按 A 股和港股交易时段运行，非交易时段暂停行情请求。
 - 默认开启低调模式，涨跌和走势颜色使用灰度。
 - 首次启动默认自选：腾讯控股、贵州茅台、平安银行。
 
@@ -52,6 +53,7 @@ dist/StockWatch.app
 Sources/StockWatchCore
   StockSymbol.swift        领域模型：市场、股票、报价、走势点
   SymbolNormalizer.swift   本地代码/名称规范化和常用别名
+  TradingRefreshSchedule.swift  A 股/港股交易时段刷新调度
 
 Sources/StockWatch
   StockWatchApp.swift          macOS 菜单栏 App 入口
@@ -64,7 +66,7 @@ Sources/StockWatch
   IntradayTrendView.swift      迷你走势线渲染
 
 Scripts/build_app.sh       生成 dist/StockWatch.app
-Tests/StockWatchTests      股票代码/名称规范化测试
+Tests/StockWatchTests      股票代码/名称规范化和交易时段测试
 ```
 
 ## 数据源
@@ -89,6 +91,16 @@ StockWatch 在 App 内直接访问腾讯公开网页接口：
 
 旧版 `watchlist.symbols` 仍会读取一次，用于迁移到默认分组。
 
+## 刷新规则
+
+后台自动刷新只在当前分组股票所属市场的交易窗口内请求行情。混合 A 股/港股分组里，只刷新当前仍在交易窗口内的市场；手动点击刷新按钮仍会立即请求全部当前分组股票。
+
+- A 股：工作日 `09:15-11:35`、`12:55-15:10`。
+- 港股：工作日 `09:15-12:05`、`12:55-16:15`。
+- 非交易窗口不请求行情接口，只做低频本地时间检查。
+
+当前版本只按 Asia/Shanghai 时区的工作日和交易时段判断，暂未接入交易所节假日表。
+
 ## 维护注意
 
 - 保持 UI 紧凑、低调，定位是工作电脑上的一眼观察工具。
@@ -100,4 +112,3 @@ StockWatch 在 App 内直接访问腾讯公开网页接口：
 
 - 正式签名打包 `.app`，支持可选开机自启动。
 - 设置页：刷新间隔、透明度、置顶行为。
-- 根据交易时段调整刷新频率。
