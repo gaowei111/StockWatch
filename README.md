@@ -1,103 +1,103 @@
 # StockWatch
 
-StockWatch is a low-profile macOS menu-bar stock watcher for A-share and Hong Kong market watchlists. It is built as a native SwiftUI app and talks directly to public Tencent market endpoints, so it does not need a local server.
+StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A 股和港股自选股。它使用原生 SwiftUI 构建，App 直接访问腾讯公开行情接口，不需要本地 server。
 
-## Features
+## 功能
 
-- Menu-bar window with no Dock icon.
-- Group tabs for watchlists, including add/delete group and custom group names.
-- Add/remove stocks in the active group.
-- Add by code, for example `700`, `00700`, `HK.00700`, `600519`, `SZ.000001`.
-- Add by Chinese name with search suggestions; clicking a suggestion adds it to the active group.
-- Rows show name, code, price, change percent, and a compact intraday trend line.
-- Discreet mode is enabled by default and renders change/trend colors in muted gray.
-- Default symbols on first launch: 腾讯控股, 贵州茅台, 平安银行.
+- 菜单栏小窗口，不显示 Dock 图标。
+- 支持自选股分组 tab，可新增、删除分组，并自定义分组名称。
+- 支持在当前分组内添加、删除、拖拽排序股票。
+- 支持代码添加，例如 `700`、`00700`、`HK.00700`、`600519`、`SZ.000001`。
+- 支持中文名称搜索联想，点击建议项即可加入当前分组。
+- 行内展示名称、代码、价格、涨跌幅和当天迷你走势线。
+- 默认开启低调模式，涨跌和走势颜色使用灰度。
+- 首次启动默认自选：腾讯控股、贵州茅台、平安银行。
 
-## Requirements
+## 环境要求
 
-- macOS 14 or newer.
-- Xcode command-line tools with Swift 6.3 or newer.
-- Network access to Tencent public quote endpoints.
+- macOS 14 或更新版本。
+- Xcode Command Line Tools，Swift 6.3 或更新版本。
+- 能访问腾讯公开行情接口的网络环境。
 
-## Run
+## 运行
 
 ```bash
 swift run StockWatch
 ```
 
-## Test
+## 测试
 
 ```bash
 swift test
 ```
 
-## Build App Bundle
+## 打包 App
 
 ```bash
 bash Scripts/build_app.sh
 open dist/StockWatch.app
 ```
 
-The app bundle is generated at:
+打包产物位置：
 
 ```text
 dist/StockWatch.app
 ```
 
-Generated build output is intentionally ignored by git.
+`dist/` 和 `.build/` 是生成产物，不进入 git。
 
-## Project Structure
+## 项目结构
 
 ```text
 Sources/StockWatchCore
-  StockSymbol.swift        Domain models: market, symbol, quote, trend point
-  SymbolNormalizer.swift   Local code/name normalization and common aliases
+  StockSymbol.swift        领域模型：市场、股票、报价、走势点
+  SymbolNormalizer.swift   本地代码/名称规范化和常用别名
 
 Sources/StockWatch
-  StockWatchApp.swift          macOS menu-bar app entry
-  WatchlistView.swift          Main window UI
-  StockRowView.swift           One watchlist row
-  WatchlistStore.swift         Groups, persistence, refresh, add/remove logic
-  QuoteProvider.swift          Tencent quote fetch and parsing
-  SymbolSearchProvider.swift   Tencent search suggestions
-  IntradayTrendProvider.swift  Tencent intraday trend fetch
-  IntradayTrendView.swift      Compact trend rendering
+  StockWatchApp.swift          macOS 菜单栏 App 入口
+  WatchlistView.swift          主窗口 UI
+  StockRowView.swift           单行股票展示
+  WatchlistStore.swift         分组、持久化、刷新、添加/删除逻辑
+  QuoteProvider.swift          腾讯行情获取和解析
+  SymbolSearchProvider.swift   腾讯股票搜索联想
+  IntradayTrendProvider.swift  腾讯当天走势数据获取
+  IntradayTrendView.swift      迷你走势线渲染
 
-Scripts/build_app.sh       Creates dist/StockWatch.app
-Tests/StockWatchTests      Symbol normalization tests
+Scripts/build_app.sh       生成 dist/StockWatch.app
+Tests/StockWatchTests      股票代码/名称规范化测试
 ```
 
-## Data Sources
+## 数据源
 
-StockWatch uses public Tencent web endpoints directly from the app:
+StockWatch 在 App 内直接访问腾讯公开网页接口：
 
-- Quotes: `https://qt.gtimg.cn/q=...`
-- Search suggestions: `https://smartbox.gtimg.cn/s3/?q=...&t=all`
-- Intraday trend: `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=...`
+- 实时报价：`https://qt.gtimg.cn/q=...`
+- 搜索联想：`https://smartbox.gtimg.cn/s3/?q=...&t=all`
+- 当天走势：`https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=...`
 
-These endpoints are suitable for personal observation. They are not official trading-grade APIs and should not be used for automated trading or commercial market-data distribution.
+这些接口适合个人观察使用，不是正式授权的交易级 API，不建议用于自动交易或商业行情分发。
 
-## Persistence
+## 持久化
 
-Watchlist groups, selected group, and discreet mode are stored in `UserDefaults`.
+自选分组、当前选中分组、低调模式保存在 `UserDefaults`。
 
-Important keys:
+主要 key：
 
 - `watchlist.groups`
 - `watchlist.selectedGroupID`
 - `watchlist.discreetMode`
 
-The legacy `watchlist.symbols` key is still read once for migration into the default group.
+旧版 `watchlist.symbols` 仍会读取一次，用于迁移到默认分组。
 
-## Maintenance Notes
+## 维护注意
 
-- Keep the UI compact and muted; this is intended to be a work-computer glance tool.
-- Keep the app serverless unless a future requirement explicitly needs richer historical data.
-- If changing Tencent response parsing, verify both A-share and HK symbols.
-- If changing persistence keys, preserve migration for existing users.
+- 保持 UI 紧凑、低调，定位是工作电脑上的一眼观察工具。
+- 除非有明确需求，不要重新引入 Python、AKShare 或本地 HTTP server。
+- 修改腾讯接口解析时，要同时验证 A 股和港股。
+- 修改持久化 key 时，要保留对已有用户数据的迁移。
 
-## Planned Improvements
+## 后续计划
 
-- Formal signed `.app` packaging and optional launch at login.
-- Settings for refresh interval, opacity, and always-on-top behavior.
-- Trading-session-aware refresh intervals.
+- 正式签名打包 `.app`，支持可选开机自启动。
+- 设置页：刷新间隔、透明度、置顶行为。
+- 根据交易时段调整刷新频率。
