@@ -49,7 +49,7 @@ final class WatchlistStore: ObservableObject {
     }
 
     init(
-        provider: QuoteProvider = FallbackQuoteProvider(primary: TencentQuoteProvider(), fallback: MockQuoteProvider()),
+        provider: QuoteProvider = FallbackQuoteProvider(primary: ConfigurableQuoteProvider(), fallback: MockQuoteProvider()),
         searchProvider: SymbolSearchProvider = TencentSymbolSearchProvider(),
         trendProvider: IntradayTrendProvider = TencentIntradayTrendProvider()
     ) {

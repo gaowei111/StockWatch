@@ -1,6 +1,6 @@
 # StockWatch
 
-StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A 股和港股自选股。它使用原生 SwiftUI 构建，App 直接访问腾讯公开行情接口，不需要本地 server。
+StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A 股和港股自选股。它使用原生 SwiftUI 构建，App 直接访问行情接口，不需要本地 server。
 
 ## 功能
 
@@ -10,6 +10,7 @@ StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A
 - 支持代码添加，例如 `700`、`00700`、`HK.00700`、`600519`、`SZ.000001`。
 - 支持中文名称搜索联想，点击建议项即可加入当前分组。
 - 行内展示名称、代码、价格、涨跌幅和当天迷你走势线。
+- 支持配置 Infoway API key 获取港股实时行情；未配置或失败时自动降级腾讯港股延时行情。
 - 自动刷新会按 A 股和港股交易时段运行，非交易时段暂停行情请求。
 - 默认开启低调模式，涨跌和走势颜色使用灰度。
 - 首次启动默认自选：腾讯控股、贵州茅台、平安银行。
@@ -71,13 +72,36 @@ Tests/StockWatchTests      股票代码/名称规范化和交易时段测试
 
 ## 数据源
 
-StockWatch 在 App 内直接访问腾讯公开网页接口：
+StockWatch 在 App 内直接访问行情接口：
 
-- 实时报价：`https://qt.gtimg.cn/q=...`
-- 搜索联想：`https://smartbox.gtimg.cn/s3/?q=...&t=all`
-- 当天走势：`https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=...`
+- A 股报价：腾讯公开行情 `https://qt.gtimg.cn/q=...`
+- 港股报价：优先 Infoway `https://data.infoway.io/stock/...`，未配置 key 或请求失败时降级腾讯公开行情。
+- 搜索联想：腾讯 `https://smartbox.gtimg.cn/s3/?q=...&t=all`
+- 当天走势：腾讯 `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=...`
 
-这些接口适合个人观察使用，不是正式授权的交易级 API，不建议用于自动交易或商业行情分发。
+这些接口适合个人观察使用，不建议用于自动交易或商业行情分发。
+
+## Infoway 配置
+
+港股实时行情通过 Infoway API key 启用。StockWatch 会按以下顺序读取 key：
+
+1. 环境变量 `INFOWAY_API_KEY`。
+2. `UserDefaults` 的 `infoway.apiKey`。
+3. `~/Library/Application Support/StockWatch/infoway-api-key.txt`。
+
+开发运行可使用：
+
+```bash
+INFOWAY_API_KEY="你的 key" swift run StockWatch
+```
+
+打包 App 通过 Finder 启动时，推荐写入 `UserDefaults`：
+
+```bash
+defaults write local.stockwatch.menu infoway.apiKey "你的 key"
+```
+
+不配置 key 时，港股报价会自动降级到腾讯公开延时行情。
 
 ## 持久化
 
@@ -105,7 +129,7 @@ StockWatch 在 App 内直接访问腾讯公开网页接口：
 
 - 保持 UI 紧凑、低调，定位是工作电脑上的一眼观察工具。
 - 除非有明确需求，不要重新引入 Python、AKShare 或本地 HTTP server。
-- 修改腾讯接口解析时，要同时验证 A 股和港股。
+- 修改行情接口解析时，要同时验证 A 股和港股；港股要覆盖 Infoway 和腾讯降级路径。
 - 修改持久化 key 时，要保留对已有用户数据的迁移。
 
 ## 后续计划

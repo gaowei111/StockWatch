@@ -7,6 +7,58 @@ protocol QuoteProvider {
 }
 
 @MainActor
+final class ConfigurableQuoteProvider: QuoteProvider {
+    private let tencentProvider: TencentQuoteProvider
+    private let infowayProvider: InfowayQuoteProvider?
+
+    init(
+        tencentProvider: TencentQuoteProvider = TencentQuoteProvider(),
+        infowayProvider: InfowayQuoteProvider? = InfowayQuoteProvider.configured()
+    ) {
+        self.tencentProvider = tencentProvider
+        self.infowayProvider = infowayProvider
+    }
+
+    func fetchQuotes(for symbols: [StockSymbol]) async throws -> [Quote] {
+        let hongKongSymbols = symbols.filter { $0.market == .hongKong }
+        let tencentSymbols = symbols.filter { $0.market != .hongKong }
+        var fetchedQuotes: [Quote] = []
+
+        if !tencentSymbols.isEmpty {
+            fetchedQuotes += try await tencentProvider.fetchQuotes(for: tencentSymbols)
+        }
+
+        if !hongKongSymbols.isEmpty {
+            fetchedQuotes += try await fetchHongKongQuotes(for: hongKongSymbols)
+        }
+
+        let quotesByID = Dictionary(uniqueKeysWithValues: fetchedQuotes.map { ($0.symbol.id, $0) })
+        return symbols.compactMap { quotesByID[$0.id] }
+    }
+
+    private func fetchHongKongQuotes(for symbols: [StockSymbol]) async throws -> [Quote] {
+        guard let infowayProvider else {
+            return try await tencentProvider.fetchQuotes(for: symbols)
+        }
+
+        do {
+            let infowayQuotes = try await infowayProvider.fetchQuotes(for: symbols)
+            let fetchedIDs = Set(infowayQuotes.map(\.symbol.id))
+            let missingSymbols = symbols.filter { !fetchedIDs.contains($0.id) }
+
+            guard !missingSymbols.isEmpty else {
+                return infowayQuotes
+            }
+
+            let fallbackQuotes = try await tencentProvider.fetchQuotes(for: missingSymbols)
+            return infowayQuotes + fallbackQuotes
+        } catch {
+            return try await tencentProvider.fetchQuotes(for: symbols)
+        }
+    }
+}
+
+@MainActor
 final class MockQuoteProvider: QuoteProvider {
     private var tick: Double = 0
 
@@ -167,6 +219,243 @@ final class TencentQuoteProvider: QuoteProvider {
     }
 }
 
+@MainActor
+final class InfowayQuoteProvider: QuoteProvider {
+    private let apiKey: String
+    private let tradeEndpoint = URL(string: "https://data.infoway.io/stock/batch_trade/")!
+    private let klineEndpoint = URL(string: "https://data.infoway.io/stock/v2/batch_kline")!
+
+    init(apiKey: String) {
+        self.apiKey = apiKey
+    }
+
+    static func configured() -> InfowayQuoteProvider? {
+        guard let apiKey = InfowayConfiguration.apiKey else {
+            return nil
+        }
+
+        return InfowayQuoteProvider(apiKey: apiKey)
+    }
+
+    func fetchQuotes(for symbols: [StockSymbol]) async throws -> [Quote] {
+        let hongKongSymbols = symbols.filter { $0.market == .hongKong }
+        guard !hongKongSymbols.isEmpty else {
+            return []
+        }
+
+        async let trades = fetchLatestTrades(for: hongKongSymbols)
+        async let dailyKlines = fetchDailyKlines(for: hongKongSymbols)
+        let (tradesByCode, klinesByCode) = try await (trades, dailyKlines)
+
+        return hongKongSymbols.compactMap { symbol in
+            guard let kline = klinesByCode[symbol.infowayCode] else {
+                return nil
+            }
+
+            let trade = tradesByCode[symbol.infowayCode]
+            let price = trade?.price ?? kline.close
+            let updatedAt = trade?.updatedAt ?? kline.updatedAt
+            let previousClose = kline.close - kline.change
+            let change = previousClose == 0 ? kline.change : price - previousClose
+            let changePercent = previousClose == 0 ? kline.changePercent : change / previousClose * 100
+
+            return Quote(
+                symbol: symbol,
+                price: price,
+                change: change,
+                changePercent: changePercent,
+                candles: [],
+                updatedAt: updatedAt
+            )
+        }
+    }
+
+    private func fetchLatestTrades(for symbols: [StockSymbol]) async throws -> [String: InfowayTrade] {
+        let codePath = symbols.map(\.infowayCode).joined(separator: ",")
+        guard let url = URL(string: tradeEndpoint.absoluteString + codePath) else {
+            throw InfowayQuoteProviderError.invalidEndpoint
+        }
+
+        let request = makeRequest(url: url)
+        let payloads: [InfowayTradePayload] = try await fetchPayload(request)
+
+        return Dictionary(uniqueKeysWithValues: payloads.map { payload in
+            (
+                payload.symbol,
+                InfowayTrade(
+                    price: parseDouble(payload.price),
+                    updatedAt: Date(timeIntervalSince1970: TimeInterval(payload.timestamp) / 1_000)
+                )
+            )
+        })
+    }
+
+    private func fetchDailyKlines(for symbols: [StockSymbol]) async throws -> [String: InfowayDailyKline] {
+        var request = makeRequest(url: klineEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            InfowayKlineRequest(
+                klineType: 8,
+                klineNum: 1,
+                codes: symbols.map(\.infowayCode).joined(separator: ",")
+            )
+        )
+
+        let seriesList: [InfowayKlineSeries] = try await fetchPayload(request)
+        var result: [String: InfowayDailyKline] = [:]
+
+        for series in seriesList {
+            guard let latest = series.responseList.first else {
+                continue
+            }
+
+            result[series.symbol] = InfowayDailyKline(
+                close: parseDouble(latest.close),
+                change: parseDouble(latest.change),
+                changePercent: parsePercent(latest.changePercent),
+                updatedAt: Date(timeIntervalSince1970: TimeInterval(parseDouble(latest.timestamp)))
+            )
+        }
+
+        return result
+    }
+
+    private func makeRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 6.0
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("StockWatch/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(apiKey, forHTTPHeaderField: "apiKey")
+        return request
+    }
+
+    private func fetchPayload<T: Decodable>(_ request: URLRequest) async throws -> T {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw InfowayQuoteProviderError.badResponse
+        }
+
+        let decoded = try JSONDecoder().decode(InfowayResponse<T>.self, from: data)
+        guard decoded.ret == 200, let payload = decoded.data else {
+            throw InfowayQuoteProviderError.apiError(decoded.messageText)
+        }
+
+        return payload
+    }
+
+    private func parseDouble(_ text: String) -> Double {
+        Double(text.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) ?? 0
+    }
+
+    private func parsePercent(_ text: String) -> Double {
+        parseDouble(text)
+    }
+}
+
+enum InfowayConfiguration {
+    static let environmentKey = "INFOWAY_API_KEY"
+    static let userDefaultsKey = "infoway.apiKey"
+    static let keyFileName = "infoway-api-key.txt"
+
+    static var apiKey: String? {
+        if let environmentValue = clean(ProcessInfo.processInfo.environment[environmentKey]) {
+            return environmentValue
+        }
+
+        if let userDefaultsValue = clean(UserDefaults.standard.string(forKey: userDefaultsKey)) {
+            return userDefaultsValue
+        }
+
+        return clean(keyFileValue())
+    }
+
+    private static func keyFileValue() -> String? {
+        guard
+            let applicationSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else {
+            return nil
+        }
+
+        let fileURL = applicationSupportURL
+            .appendingPathComponent("StockWatch", isDirectory: true)
+            .appendingPathComponent(keyFileName)
+
+        return try? String(contentsOf: fileURL, encoding: .utf8)
+    }
+
+    private static func clean(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct InfowayResponse<T: Decodable>: Decodable {
+    var ret: Int?
+    var msg: String?
+    var data: T?
+    var code: Int?
+    var message: String?
+
+    var messageText: String {
+        message ?? msg ?? "Infoway 行情返回异常"
+    }
+}
+
+private struct InfowayTradePayload: Decodable {
+    var symbol: String
+    var timestamp: Int64
+    var price: String
+
+    enum CodingKeys: String, CodingKey {
+        case symbol = "s"
+        case timestamp = "t"
+        case price = "p"
+    }
+}
+
+private struct InfowayKlineRequest: Encodable {
+    var klineType: Int
+    var klineNum: Int
+    var codes: String
+}
+
+private struct InfowayKlineSeries: Decodable {
+    var symbol: String
+    var responseList: [InfowayKlinePayload]
+
+    enum CodingKeys: String, CodingKey {
+        case symbol = "s"
+        case responseList = "respList"
+    }
+}
+
+private struct InfowayKlinePayload: Decodable {
+    var timestamp: String
+    var close: String
+    var changePercent: String
+    var change: String
+
+    enum CodingKeys: String, CodingKey {
+        case timestamp = "t"
+        case close = "c"
+        case changePercent = "pc"
+        case change = "pca"
+    }
+}
+
+private struct InfowayTrade {
+    var price: Double
+    var updatedAt: Date
+}
+
+private struct InfowayDailyKline {
+    var close: Double
+    var change: Double
+    var changePercent: Double
+    var updatedAt: Date
+}
+
 enum QuoteProviderError: LocalizedError {
     case invalidEndpoint
     case badResponse
@@ -184,6 +473,23 @@ enum QuoteProviderError: LocalizedError {
     }
 }
 
+enum InfowayQuoteProviderError: LocalizedError {
+    case invalidEndpoint
+    case badResponse
+    case apiError(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidEndpoint:
+            return "Infoway 行情地址无效"
+        case .badResponse:
+            return "Infoway 行情返回异常"
+        case .apiError(let message):
+            return message
+        }
+    }
+}
+
 private extension StockSymbol {
     var tencentCode: String {
         switch market {
@@ -194,6 +500,10 @@ private extension StockSymbol {
         case .shenzhen:
             return "sz\(code)"
         }
+    }
+
+    var infowayCode: String {
+        compactCode
     }
 }
 
