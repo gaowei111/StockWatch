@@ -9,14 +9,11 @@ protocol QuoteProvider {
 @MainActor
 final class ConfigurableQuoteProvider: QuoteProvider {
     private let tencentProvider: TencentQuoteProvider
-    private let infowayProvider: InfowayQuoteProvider?
 
     init(
-        tencentProvider: TencentQuoteProvider = TencentQuoteProvider(),
-        infowayProvider: InfowayQuoteProvider? = InfowayQuoteProvider.configured()
+        tencentProvider: TencentQuoteProvider = TencentQuoteProvider()
     ) {
         self.tencentProvider = tencentProvider
-        self.infowayProvider = infowayProvider
     }
 
     func fetchQuotes(for symbols: [StockSymbol]) async throws -> [Quote] {
@@ -37,6 +34,7 @@ final class ConfigurableQuoteProvider: QuoteProvider {
     }
 
     private func fetchHongKongQuotes(for symbols: [StockSymbol]) async throws -> [Quote] {
+        let infowayProvider = InfowayQuoteProvider.configured()
         guard let infowayProvider else {
             return try await tencentProvider.fetchQuotes(for: symbols)
         }
@@ -332,15 +330,36 @@ enum InfowayConfiguration {
     static let keyFileName = "infoway-api-key.txt"
 
     static var apiKey: String? {
-        if let environmentValue = clean(ProcessInfo.processInfo.environment[environmentKey]) {
-            return environmentValue
-        }
-
         if let userDefaultsValue = clean(UserDefaults.standard.string(forKey: userDefaultsKey)) {
             return userDefaultsValue
         }
 
+        if let environmentValue = clean(ProcessInfo.processInfo.environment[environmentKey]) {
+            return environmentValue
+        }
+
         return clean(keyFileValue())
+    }
+
+    static var savedAPIKey: String {
+        UserDefaults.standard.string(forKey: userDefaultsKey) ?? ""
+    }
+
+    static var hasEffectiveAPIKey: Bool {
+        apiKey != nil
+    }
+
+    static func saveAPIKey(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            clearSavedAPIKey()
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: userDefaultsKey)
+        }
+    }
+
+    static func clearSavedAPIKey() {
+        UserDefaults.standard.removeObject(forKey: userDefaultsKey)
     }
 
     private static func keyFileValue() -> String? {

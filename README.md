@@ -11,6 +11,7 @@ StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A
 - 支持中文名称搜索联想，点击建议项即可加入当前分组。
 - 行内展示名称、代码、价格、涨跌幅和当天迷你走势线。
 - 支持配置 Infoway API key 获取港股实时行情；未配置或失败时自动降级腾讯港股延时行情。
+- 顶部工具栏可直接修改 Infoway API key，保存后立即生效。
 - 自动刷新会按 A 股和港股交易时段运行，非交易时段暂停行情请求。
 - 默认开启低调模式，涨跌和走势颜色使用灰度。
 - 首次启动默认自选：腾讯控股、贵州茅台、平安银行。
@@ -83,11 +84,13 @@ StockWatch 在 App 内直接访问行情接口：
 
 ## Infoway 配置
 
-港股实时行情通过 Infoway API key 启用。StockWatch 会按以下顺序读取 key：
+港股行情通过 Infoway API key 启用。StockWatch 会按以下顺序读取 key：
 
-1. 环境变量 `INFOWAY_API_KEY`。
-2. `UserDefaults` 的 `infoway.apiKey`。
+1. `UserDefaults` 的 `infoway.apiKey`。
+2. 环境变量 `INFOWAY_API_KEY`。
 3. `~/Library/Application Support/StockWatch/infoway-api-key.txt`。
+
+打包 App 内可点击顶部工具栏的齿轮按钮修改 key。
 
 开发运行可使用：
 
@@ -95,7 +98,7 @@ StockWatch 在 App 内直接访问行情接口：
 INFOWAY_API_KEY="你的 key" swift run StockWatch
 ```
 
-打包 App 通过 Finder 启动时，推荐写入 `UserDefaults`：
+也可用命令写入 `UserDefaults`：
 
 ```bash
 defaults write local.stockwatch.menu infoway.apiKey "你的 key"

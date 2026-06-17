@@ -6,6 +6,9 @@ struct WatchlistView: View {
     @State private var groupNameDraft = ""
     @State private var isRenamingGroup = false
     @State private var dragState: StockRowDragState?
+    @State private var isShowingSettings = false
+    @State private var infowayAPIKeyDraft = ""
+    @State private var settingsStatusText = ""
 
     private let stockRowHeight: CGFloat = 40
     private let stockRowSpacing: CGFloat = 2
@@ -16,6 +19,10 @@ struct WatchlistView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if isShowingSettings {
+                Divider()
+                settingsBar
+            }
             Divider()
             groupTabs
             if isRenamingGroup {
@@ -35,6 +42,7 @@ struct WatchlistView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             groupNameDraft = store.currentGroupName
+            infowayAPIKeyDraft = InfowayConfiguration.savedAPIKey
         }
         .onChange(of: store.currentGroupName) { _, newName in
             groupNameDraft = newName
@@ -65,6 +73,16 @@ struct WatchlistView: View {
             .help("刷新")
 
             Button {
+                infowayAPIKeyDraft = InfowayConfiguration.savedAPIKey
+                settingsStatusText = InfowayConfiguration.hasEffectiveAPIKey ? "已配置" : "未配置"
+                isShowingSettings.toggle()
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("设置")
+
+            Button {
                 NSApplication.shared.terminate(nil)
             } label: {
                 Image(systemName: "power")
@@ -74,6 +92,47 @@ struct WatchlistView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
+    }
+
+    private var settingsBar: some View {
+        HStack(spacing: 8) {
+            Text("Infoway")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 46, alignment: .leading)
+
+            SecureField("API key", text: $infowayAPIKeyDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11, design: .monospaced))
+                .onSubmit {
+                    saveInfowayAPIKey()
+                }
+
+            if !settingsStatusText.isEmpty {
+                Text(settingsStatusText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Button {
+                saveInfowayAPIKey()
+            } label: {
+                Image(systemName: "checkmark")
+            }
+            .buttonStyle(.borderless)
+            .help("保存")
+
+            Button {
+                clearInfowayAPIKey()
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("清空")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 34)
     }
 
     private var groupTabs: some View {
@@ -334,6 +393,24 @@ struct WatchlistView: View {
         }
 
         return 0
+    }
+
+    private func saveInfowayAPIKey() {
+        InfowayConfiguration.saveAPIKey(infowayAPIKeyDraft)
+        infowayAPIKeyDraft = InfowayConfiguration.savedAPIKey
+        settingsStatusText = InfowayConfiguration.hasEffectiveAPIKey ? "已保存" : "未配置"
+        Task {
+            await store.refresh()
+        }
+    }
+
+    private func clearInfowayAPIKey() {
+        InfowayConfiguration.clearSavedAPIKey()
+        infowayAPIKeyDraft = ""
+        settingsStatusText = InfowayConfiguration.hasEffectiveAPIKey ? "环境变量" : "已清空"
+        Task {
+            await store.refresh()
+        }
     }
 }
 
