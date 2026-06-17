@@ -242,29 +242,20 @@ final class InfowayQuoteProvider: QuoteProvider {
             return []
         }
 
-        async let minuteKlines = fetchKlines(for: hongKongSymbols, klineType: 1)
-        async let dailyKlines = fetchDailyKlines(for: hongKongSymbols)
-        let (minuteKlinesByCode, dailyKlinesByCode) = try await (try? minuteKlines, dailyKlines)
+        let dailyKlinesByCode = try await fetchDailyKlines(for: hongKongSymbols)
 
         return hongKongSymbols.compactMap { symbol in
             guard let dailyKline = dailyKlinesByCode[symbol.infowayCode] else {
                 return nil
             }
 
-            let minuteKline = minuteKlinesByCode?[symbol.infowayCode]
-            let price = minuteKline?.close ?? dailyKline.close
-            let updatedAt = minuteKline?.updatedAt ?? Date()
-            let previousClose = dailyKline.close - dailyKline.change
-            let change = previousClose == 0 ? dailyKline.change : price - previousClose
-            let changePercent = previousClose == 0 ? dailyKline.changePercent : change / previousClose * 100
-
             return Quote(
                 symbol: symbol,
-                price: price,
-                change: change,
-                changePercent: changePercent,
+                price: dailyKline.close,
+                change: dailyKline.change,
+                changePercent: dailyKline.changePercent,
                 candles: [],
-                updatedAt: updatedAt
+                updatedAt: Date()
             )
         }
     }
@@ -296,8 +287,7 @@ final class InfowayQuoteProvider: QuoteProvider {
             result[series.symbol] = InfowayDailyKline(
                 close: parseDouble(latest.close),
                 change: parseDouble(latest.change),
-                changePercent: parsePercent(latest.changePercent),
-                updatedAt: Date(timeIntervalSince1970: TimeInterval(parseDouble(latest.timestamp)))
+                changePercent: parsePercent(latest.changePercent)
             )
         }
 
@@ -402,13 +392,11 @@ private struct InfowayKlineSeries: Decodable {
 }
 
 private struct InfowayKlinePayload: Decodable {
-    var timestamp: String
     var close: String
     var changePercent: String
     var change: String
 
     enum CodingKeys: String, CodingKey {
-        case timestamp = "t"
         case close = "c"
         case changePercent = "pc"
         case change = "pca"
@@ -419,7 +407,6 @@ private struct InfowayDailyKline {
     var close: Double
     var change: Double
     var changePercent: Double
-    var updatedAt: Date
 }
 
 enum QuoteProviderError: LocalizedError {
