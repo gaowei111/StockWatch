@@ -67,6 +67,7 @@ Sources/StockWatch
   IntradayTrendProvider.swift  腾讯当天走势数据获取
   IntradayTrendView.swift      迷你走势线渲染
 
+Assets/AppIcon.png     App 图标源图，打包时生成 StockWatch.icns
 Scripts/build_app.sh       生成 dist/StockWatch.app
 Tests/StockWatchTests      股票代码/名称规范化和交易时段测试
 ```
