@@ -222,7 +222,6 @@ final class TencentQuoteProvider: QuoteProvider {
 @MainActor
 final class InfowayQuoteProvider: QuoteProvider {
     private let apiKey: String
-    private let tradeEndpoint = URL(string: "https://data.infoway.io/stock/batch_trade/")!
     private let klineEndpoint = URL(string: "https://data.infoway.io/stock/v2/batch_kline")!
 
     init(apiKey: String) {
@@ -243,21 +242,21 @@ final class InfowayQuoteProvider: QuoteProvider {
             return []
         }
 
-        async let trades = fetchLatestTrades(for: hongKongSymbols)
+        async let minuteKlines = fetchKlines(for: hongKongSymbols, klineType: 1)
         async let dailyKlines = fetchDailyKlines(for: hongKongSymbols)
-        let (tradesByCode, klinesByCode) = try await (trades, dailyKlines)
+        let (minuteKlinesByCode, dailyKlinesByCode) = try await (try? minuteKlines, dailyKlines)
 
         return hongKongSymbols.compactMap { symbol in
-            guard let kline = klinesByCode[symbol.infowayCode] else {
+            guard let dailyKline = dailyKlinesByCode[symbol.infowayCode] else {
                 return nil
             }
 
-            let trade = tradesByCode[symbol.infowayCode]
-            let price = trade?.price ?? kline.close
-            let updatedAt = trade?.updatedAt ?? kline.updatedAt
-            let previousClose = kline.close - kline.change
-            let change = previousClose == 0 ? kline.change : price - previousClose
-            let changePercent = previousClose == 0 ? kline.changePercent : change / previousClose * 100
+            let minuteKline = minuteKlinesByCode?[symbol.infowayCode]
+            let price = minuteKline?.close ?? dailyKline.close
+            let updatedAt = minuteKline?.updatedAt ?? Date()
+            let previousClose = dailyKline.close - dailyKline.change
+            let change = previousClose == 0 ? dailyKline.change : price - previousClose
+            let changePercent = previousClose == 0 ? dailyKline.changePercent : change / previousClose * 100
 
             return Quote(
                 symbol: symbol,
@@ -270,33 +269,17 @@ final class InfowayQuoteProvider: QuoteProvider {
         }
     }
 
-    private func fetchLatestTrades(for symbols: [StockSymbol]) async throws -> [String: InfowayTrade] {
-        let codePath = symbols.map(\.infowayCode).joined(separator: ",")
-        guard let url = URL(string: tradeEndpoint.absoluteString + codePath) else {
-            throw InfowayQuoteProviderError.invalidEndpoint
-        }
-
-        let request = makeRequest(url: url)
-        let payloads: [InfowayTradePayload] = try await fetchPayload(request)
-
-        return Dictionary(uniqueKeysWithValues: payloads.map { payload in
-            (
-                payload.symbol,
-                InfowayTrade(
-                    price: parseDouble(payload.price),
-                    updatedAt: Date(timeIntervalSince1970: TimeInterval(payload.timestamp) / 1_000)
-                )
-            )
-        })
+    private func fetchDailyKlines(for symbols: [StockSymbol]) async throws -> [String: InfowayDailyKline] {
+        try await fetchKlines(for: symbols, klineType: 8)
     }
 
-    private func fetchDailyKlines(for symbols: [StockSymbol]) async throws -> [String: InfowayDailyKline] {
+    private func fetchKlines(for symbols: [StockSymbol], klineType: Int) async throws -> [String: InfowayDailyKline] {
         var request = makeRequest(url: klineEndpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
             InfowayKlineRequest(
-                klineType: 8,
+                klineType: klineType,
                 klineNum: 1,
                 codes: symbols.map(\.infowayCode).joined(separator: ",")
             )
@@ -402,18 +385,6 @@ private struct InfowayResponse<T: Decodable>: Decodable {
     }
 }
 
-private struct InfowayTradePayload: Decodable {
-    var symbol: String
-    var timestamp: Int64
-    var price: String
-
-    enum CodingKeys: String, CodingKey {
-        case symbol = "s"
-        case timestamp = "t"
-        case price = "p"
-    }
-}
-
 private struct InfowayKlineRequest: Encodable {
     var klineType: Int
     var klineNum: Int
@@ -442,11 +413,6 @@ private struct InfowayKlinePayload: Decodable {
         case changePercent = "pc"
         case change = "pca"
     }
-}
-
-private struct InfowayTrade {
-    var price: Double
-    var updatedAt: Date
 }
 
 private struct InfowayDailyKline {
