@@ -7,11 +7,14 @@ struct WatchlistView: View {
     @State private var isRenamingGroup = false
     @State private var dragState: StockRowDragState?
     @State private var isShowingSettings = false
-    @State private var infowayAPIKeyDraft = ""
+    @State private var longbridgeAppKeyDraft = ""
+    @State private var longbridgeAppSecretDraft = ""
+    @State private var longbridgeAccessTokenDraft = ""
     @State private var settingsStatusText = ""
 
     private let stockRowHeight: CGFloat = 40
     private let stockRowSpacing: CGFloat = 2
+
     private var stockRowStep: CGFloat {
         stockRowHeight + stockRowSpacing
     }
@@ -40,12 +43,23 @@ struct WatchlistView: View {
             footer
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .frame(width: 318, height: 320)
+        .animation(.easeInOut(duration: 0.14), value: isShowingSettings)
         .onAppear {
             groupNameDraft = store.currentGroupName
-            infowayAPIKeyDraft = InfowayConfiguration.savedAPIKey
+            loadLongbridgeCredentialDrafts()
         }
         .onChange(of: store.currentGroupName) { _, newName in
             groupNameDraft = newName
+        }
+        .onChange(of: longbridgeAppKeyDraft) { _, _ in
+            persistLongbridgeCredentialDrafts()
+        }
+        .onChange(of: longbridgeAppSecretDraft) { _, _ in
+            persistLongbridgeCredentialDrafts()
+        }
+        .onChange(of: longbridgeAccessTokenDraft) { _, _ in
+            persistLongbridgeCredentialDrafts()
         }
     }
 
@@ -73,8 +87,8 @@ struct WatchlistView: View {
             .help("刷新")
 
             Button {
-                infowayAPIKeyDraft = InfowayConfiguration.savedAPIKey
-                settingsStatusText = InfowayConfiguration.hasEffectiveAPIKey ? "已配置" : "未配置"
+                loadLongbridgeCredentialDrafts()
+                settingsStatusText = LongbridgeConfiguration.statusText
                 isShowingSettings.toggle()
             } label: {
                 Image(systemName: "gearshape")
@@ -95,44 +109,57 @@ struct WatchlistView: View {
     }
 
     private var settingsBar: some View {
-        HStack(spacing: 8) {
-            Text("Infoway")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 46, alignment: .leading)
-
-            SecureField("API key", text: $infowayAPIKeyDraft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11, design: .monospaced))
-                .onSubmit {
-                    saveInfowayAPIKey()
+        VStack(spacing: 5) {
+            HStack(spacing: 8) {
+                Text("Longbridge")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !settingsStatusText.isEmpty {
+                    Text(settingsStatusText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
+                Button {
+                    saveLongbridgeCredentials()
+                } label: {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(.borderless)
+                .help("保存")
 
-            if !settingsStatusText.isEmpty {
-                Text(settingsStatusText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                Button {
+                    clearLongbridgeCredentials()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .help("清空")
             }
 
-            Button {
-                saveInfowayAPIKey()
-            } label: {
-                Image(systemName: "checkmark")
-            }
-            .buttonStyle(.borderless)
-            .help("保存")
-
-            Button {
-                clearInfowayAPIKey()
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .help("清空")
+            credentialField(label: "Key", placeholder: "App Key", text: $longbridgeAppKeyDraft)
+            credentialField(label: "Secret", placeholder: "App Secret", text: $longbridgeAppSecretDraft)
+            credentialField(label: "Token", placeholder: "Access Token", text: $longbridgeAccessTokenDraft)
         }
         .padding(.horizontal, 14)
-        .frame(height: 34)
+        .padding(.vertical, 7)
+    }
+
+    private func credentialField(label: String, placeholder: String, text: Binding<String>) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .frame(width: 38, alignment: .leading)
+            SecureField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 10, design: .monospaced))
+                .frame(height: 18)
+                .onSubmit {
+                    saveLongbridgeCredentials()
+                }
+        }
     }
 
     private var groupTabs: some View {
@@ -273,7 +300,8 @@ struct WatchlistView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 160)
+        .frame(maxWidth: .infinity)
+        .frame(maxHeight: .infinity)
     }
 
     private var footer: some View {
@@ -288,6 +316,10 @@ struct WatchlistView: View {
             }
 
             Spacer()
+            if !store.quoteSourceStatusText.isEmpty {
+                Text(store.quoteSourceStatusText)
+                    .foregroundStyle(.tertiary)
+            }
             Text(store.refreshStatusText)
                 .foregroundStyle(.tertiary)
         }
@@ -329,9 +361,10 @@ struct WatchlistView: View {
                     .padding(.vertical, 2)
                     .animation(.easeInOut(duration: 0.12), value: dragState?.targetIndex)
                 }
-                .frame(minHeight: 145, idealHeight: 210, maxHeight: 310)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
     }
 
     private func rowDragGesture(for symbol: StockSymbol) -> some Gesture {
@@ -395,19 +428,39 @@ struct WatchlistView: View {
         return 0
     }
 
-    private func saveInfowayAPIKey() {
-        InfowayConfiguration.saveAPIKey(infowayAPIKeyDraft)
-        infowayAPIKeyDraft = InfowayConfiguration.savedAPIKey
-        settingsStatusText = InfowayConfiguration.hasEffectiveAPIKey ? "已保存" : "未配置"
+    private func loadLongbridgeCredentialDrafts() {
+        longbridgeAppKeyDraft = LongbridgeConfiguration.draftAppKey
+        longbridgeAppSecretDraft = LongbridgeConfiguration.draftAppSecret
+        longbridgeAccessTokenDraft = LongbridgeConfiguration.draftAccessToken
+    }
+
+    private func persistLongbridgeCredentialDrafts() {
+        LongbridgeConfiguration.saveDraft(
+            appKey: longbridgeAppKeyDraft,
+            appSecret: longbridgeAppSecretDraft,
+            accessToken: longbridgeAccessTokenDraft
+        )
+    }
+
+    private func saveLongbridgeCredentials() {
+        LongbridgeConfiguration.save(
+            appKey: longbridgeAppKeyDraft,
+            appSecret: longbridgeAppSecretDraft,
+            accessToken: longbridgeAccessTokenDraft
+        )
+        loadLongbridgeCredentialDrafts()
+        settingsStatusText = LongbridgeConfiguration.hasEffectiveCredentials ? "已保存" : LongbridgeConfiguration.statusText
+        store.restartLongbridgeStream()
         Task {
             await store.refresh()
         }
     }
 
-    private func clearInfowayAPIKey() {
-        InfowayConfiguration.clearSavedAPIKey()
-        infowayAPIKeyDraft = ""
-        settingsStatusText = InfowayConfiguration.hasEffectiveAPIKey ? "环境变量" : "已清空"
+    private func clearLongbridgeCredentials() {
+        LongbridgeConfiguration.clearSavedCredentials()
+        loadLongbridgeCredentialDrafts()
+        settingsStatusText = LongbridgeConfiguration.hasEffectiveCredentials ? "环境变量" : "已清空"
+        store.restartLongbridgeStream()
         Task {
             await store.refresh()
         }

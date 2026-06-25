@@ -69,7 +69,7 @@ struct TencentSymbolSearchProvider: SymbolSearchProvider {
         let name = values[2]
         let assetType = values[4].uppercased()
 
-        guard assetType.hasPrefix("GP") else {
+        guard isSupportedAssetType(assetType) else {
             return nil
         }
 
@@ -83,6 +83,10 @@ struct TencentSymbolSearchProvider: SymbolSearchProvider {
         default:
             return nil
         }
+    }
+
+    private func isSupportedAssetType(_ assetType: String) -> Bool {
+        assetType.hasPrefix("GP") || assetType.contains("ETF") || assetType == "LOF"
     }
 
     private func decodeJavaScriptEscapes(_ text: String) -> String {

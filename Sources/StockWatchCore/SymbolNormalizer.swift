@@ -21,7 +21,16 @@ public enum SymbolNormalizer {
         "SZ.002415": "海康威视",
         "SZ.002050": "三花智控",
         "SZ.002240": "盛新锂能",
-        "SZ.300750": "宁德时代"
+        "SZ.300750": "宁德时代",
+        "SH.510300": "沪深300ETF华泰柏瑞",
+        "SH.510500": "中证500ETF南方",
+        "SH.512880": "证券ETF国泰",
+        "SH.513100": "纳指ETF国泰",
+        "SH.588000": "科创50ETF华夏",
+        "SZ.159915": "创业板ETF易方达",
+        "SZ.159919": "沪深300ETF嘉实",
+        "SZ.159941": "纳指ETF广发",
+        "SZ.161725": "白酒基金LOF"
     ]
 
     private static let aliases: [String: String] = [
@@ -58,7 +67,19 @@ public enum SymbolNormalizer {
         "盛新": "SZ.002240",
         "盛新锂能": "SZ.002240",
         "宁德": "SZ.300750",
-        "宁德时代": "SZ.300750"
+        "宁德时代": "SZ.300750",
+        "沪深300ETF": "SH.510300",
+        "300ETF": "SH.510300",
+        "中证500ETF": "SH.510500",
+        "500ETF": "SH.510500",
+        "证券ETF": "SH.512880",
+        "券商ETF": "SH.512880",
+        "科创50ETF": "SH.588000",
+        "科创ETF": "SH.588000",
+        "创业板ETF": "SZ.159915",
+        "纳指ETF": "SZ.159941",
+        "白酒LOF": "SZ.161725",
+        "白酒基金": "SZ.161725"
     ]
 
     public static func normalize(_ rawInput: String) -> StockSymbol? {
@@ -87,11 +108,11 @@ public enum SymbolNormalizer {
         }
 
         if digits.count == 6 {
-            if digits.hasPrefix("6") || digits.hasPrefix("9") {
+            if digits.hasPrefix("5") || digits.hasPrefix("6") || digits.hasPrefix("9") {
                 return makeSymbol(market: .shanghai, code: digits)
             }
 
-            if digits.hasPrefix("0") || digits.hasPrefix("2") || digits.hasPrefix("3") {
+            if digits.hasPrefix("0") || digits.hasPrefix("1") || digits.hasPrefix("2") || digits.hasPrefix("3") {
                 return makeSymbol(market: .shenzhen, code: digits)
             }
         }

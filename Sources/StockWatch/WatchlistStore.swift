@@ -33,10 +33,13 @@ final class WatchlistStore: ObservableObject {
     @Published private(set) var searchSuggestions: [StockSymbol] = []
     @Published private(set) var errorMessage: String?
     @Published private(set) var refreshStatusText = TradingRefreshSchedule.statusText(for: [])
+    @Published private(set) var quoteSourceStatusText = ""
+    @Published private(set) var isLongbridgeStreamConnected = false
 
     private let provider: QuoteProvider
     private let searchProvider: SymbolSearchProvider
     private let trendProvider: IntradayTrendProvider
+    private let longbridgeStream: LongbridgeQuoteStream
     private let groupsKey = "watchlist.groups"
     private let selectedGroupIDKey = "watchlist.selectedGroupID"
     private let symbolsKey = "watchlist.symbols"
@@ -51,22 +54,30 @@ final class WatchlistStore: ObservableObject {
     init(
         provider: QuoteProvider = FallbackQuoteProvider(primary: ConfigurableQuoteProvider(), fallback: MockQuoteProvider()),
         searchProvider: SymbolSearchProvider = TencentSymbolSearchProvider(),
-        trendProvider: IntradayTrendProvider = TencentIntradayTrendProvider()
+        trendProvider: IntradayTrendProvider = TencentIntradayTrendProvider(),
+        longbridgeStream: LongbridgeQuoteStream = LongbridgeQuoteStream()
     ) {
         self.provider = provider
         self.searchProvider = searchProvider
         self.trendProvider = trendProvider
+        self.longbridgeStream = longbridgeStream
         discreetMode = UserDefaults.standard.object(forKey: discreetModeKey) as? Bool ?? true
         groups = Self.loadGroups(groupsKey: groupsKey, legacySymbolsKey: symbolsKey)
         selectedGroupID = Self.loadSelectedGroupID(key: selectedGroupIDKey, groups: groups)
+        configureLongbridgeStream()
         syncSymbolsFromSelectedGroup()
         updateRefreshStatus()
+        updateQuoteSourceStatus()
         persistGroups()
     }
 
     deinit {
         refreshTask?.cancel()
         searchTask?.cancel()
+        let longbridgeStream = longbridgeStream
+        Task { @MainActor in
+            longbridgeStream.stop()
+        }
     }
 
     func start() {
@@ -74,6 +85,7 @@ final class WatchlistStore: ObservableObject {
             return
         }
 
+        updateLongbridgeStreamSubscription()
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else {
@@ -91,6 +103,11 @@ final class WatchlistStore: ObservableObject {
         await refresh(symbolsToRefresh: symbols, replaceAll: true)
     }
 
+    func restartLongbridgeStream() {
+        updateLongbridgeStreamSubscription()
+        updateQuoteSourceStatus()
+    }
+
     private func refresh(symbolsToRefresh: [StockSymbol], replaceAll: Bool) async {
         defer {
             updateRefreshStatus()
@@ -101,6 +118,7 @@ final class WatchlistStore: ObservableObject {
                 quotes = [:]
                 trends = [:]
             }
+            updateQuoteSourceStatus()
             return
         }
 
@@ -110,10 +128,11 @@ final class WatchlistStore: ObservableObject {
         }
 
         do {
-            let fetchedQuotes = try await provider.fetchQuotes(for: symbolsToRefresh)
+            let quoteSymbolsToRefresh = symbolsToRefresh.filter(shouldPollQuote)
+            let fetchedQuotes = quoteSymbolsToRefresh.isEmpty ? [] : try await provider.fetchQuotes(for: quoteSymbolsToRefresh)
             let fetchedTrends = await trendProvider.fetchTrends(for: symbolsToRefresh)
 
-            if replaceAll {
+            if replaceAll, quotes.isEmpty {
                 quotes = Dictionary(uniqueKeysWithValues: fetchedQuotes.map { ($0.symbol.id, $0) })
                 trends = fetchedTrends
             } else {
@@ -126,8 +145,10 @@ final class WatchlistStore: ObservableObject {
                 }
             }
             errorMessage = nil
+            updateQuoteSourceStatus()
         } catch {
             errorMessage = error.localizedDescription
+            updateQuoteSourceStatus()
         }
     }
 
@@ -136,6 +157,7 @@ final class WatchlistStore: ObservableObject {
         UserDefaults.standard.set(group.id.uuidString, forKey: selectedGroupIDKey)
         syncSymbolsFromSelectedGroup()
         updateRefreshStatus()
+        updateQuoteSourceStatus()
         Task {
             await refresh()
         }
@@ -161,7 +183,9 @@ final class WatchlistStore: ObservableObject {
         }
         syncSymbolsFromSelectedGroup()
         updateRefreshStatus()
+        updateQuoteSourceStatus()
         persistGroups()
+        updateLongbridgeStreamSubscription()
         Task {
             await refresh()
         }
@@ -258,7 +282,9 @@ final class WatchlistStore: ObservableObject {
         searchSuggestions = []
         errorMessage = nil
         persistCurrentSymbols()
+        updateLongbridgeStreamSubscription()
         updateRefreshStatus()
+        updateQuoteSourceStatus()
         await refresh()
     }
 
@@ -267,7 +293,9 @@ final class WatchlistStore: ObservableObject {
         quotes.removeValue(forKey: symbol.id)
         trends.removeValue(forKey: symbol.id)
         persistCurrentSymbols()
+        updateLongbridgeStreamSubscription()
         updateRefreshStatus()
+        updateQuoteSourceStatus()
     }
 
     func move(from source: IndexSet, to destination: Int) {
@@ -291,6 +319,57 @@ final class WatchlistStore: ObservableObject {
         return true
     }
 
+    private func configureLongbridgeStream() {
+        longbridgeStream.onQuote = { [weak self] quote in
+            guard let self else {
+                return
+            }
+
+            quotes[quote.symbol.id] = quote
+            errorMessage = nil
+            updateQuoteSourceStatus()
+        }
+
+        longbridgeStream.onConnectionChange = { [weak self] connected in
+            guard let self else {
+                return
+            }
+
+            isLongbridgeStreamConnected = connected
+            updateQuoteSourceStatus()
+        }
+
+        longbridgeStream.onError = { [weak self] message in
+            guard let self else {
+                return
+            }
+
+            if symbols.contains(where: { $0.market == .hongKong }) {
+                errorMessage = message
+            }
+            updateQuoteSourceStatus()
+        }
+    }
+
+    private func updateLongbridgeStreamSubscription(at date: Date = Date()) {
+        let hongKongSymbols = allHongKongSymbols
+        let streamSymbols = TradingRefreshSchedule.isActive(for: hongKongSymbols, at: date) ? hongKongSymbols : []
+        longbridgeStream.update(symbols: streamSymbols)
+        updateQuoteSourceStatus(at: date)
+    }
+
+    private var allHongKongSymbols: [StockSymbol] {
+        Array(
+            Dictionary(uniqueKeysWithValues: groups.flatMap(\.symbols).filter { $0.market == .hongKong }.map { ($0.id, $0) })
+                .values
+                .sorted { $0.id < $1.id }
+        )
+    }
+
+    private func shouldPollQuote(_ symbol: StockSymbol) -> Bool {
+        symbol.market != .hongKong || !isLongbridgeStreamConnected
+    }
+
     private var currentGroupIndex: Int? {
         guard let selectedGroupID else {
             return nil
@@ -300,18 +379,66 @@ final class WatchlistStore: ObservableObject {
     }
 
     private func scheduledRefreshCycle() async -> TimeInterval {
+        let now = Date()
         updateRefreshStatus()
+        updateLongbridgeStreamSubscription(at: now)
 
-        let activeSymbols = TradingRefreshSchedule.activeSymbols(from: symbols)
+        let activeSymbols = TradingRefreshSchedule.activeSymbols(from: symbols, at: now)
         if !activeSymbols.isEmpty {
             await refresh(symbolsToRefresh: activeSymbols, replaceAll: false)
         }
 
-        return TradingRefreshSchedule.nextDelay(for: symbols)
+        return min(
+            TradingRefreshSchedule.nextDelay(for: symbols, at: now),
+            TradingRefreshSchedule.nextDelay(for: allHongKongSymbols, at: now)
+        )
     }
 
     private func updateRefreshStatus() {
         refreshStatusText = TradingRefreshSchedule.statusText(for: symbols)
+    }
+
+    func updateQuoteSourceStatus() {
+        updateQuoteSourceStatus(at: Date())
+    }
+
+    private func updateQuoteSourceStatus(at date: Date) {
+        guard symbols.contains(where: { $0.market == .hongKong }) else {
+            quoteSourceStatusText = ""
+            return
+        }
+
+        let currentHongKongSymbols = symbols.filter { $0.market == .hongKong }
+        guard TradingRefreshSchedule.isActive(for: currentHongKongSymbols, at: date) else {
+            quoteSourceStatusText = "港股休市"
+            return
+        }
+
+        let hongKongSources = Set<QuoteSource>(symbols.compactMap { symbol in
+            guard symbol.market == .hongKong else {
+                return nil
+            }
+
+            return quotes[symbol.id]?.source
+        })
+
+        if isLongbridgeStreamConnected, LongbridgeConfiguration.hasEffectiveCredentials {
+            quoteSourceStatusText = "港股 Longbridge"
+        } else if hongKongSources.contains(.longbridge), !hongKongSources.contains(.tencent) {
+            quoteSourceStatusText = "港股 Longbridge"
+        } else if hongKongSources.contains(.longbridge), hongKongSources.contains(.tencent) {
+            quoteSourceStatusText = "港股混合"
+        } else if hongKongSources.contains(.tencent) {
+            quoteSourceStatusText = "港股腾讯兜底"
+        } else if hongKongSources.contains(.mock) {
+            quoteSourceStatusText = "港股模拟"
+        } else if LongbridgeConfiguration.hasEnteredCredentials, !LongbridgeConfiguration.hasEffectiveCredentials {
+            quoteSourceStatusText = "Longbridge配置待检查"
+        } else if LongbridgeConfiguration.hasEffectiveCredentials {
+            quoteSourceStatusText = "港股待刷新"
+        } else {
+            quoteSourceStatusText = "港股腾讯兜底"
+        }
     }
 
     private func shouldSearchSuggestions(for input: String) -> Bool {

@@ -1,17 +1,17 @@
 # StockWatch
 
-StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A 股和港股自选股。它使用原生 SwiftUI 构建，App 直接访问行情接口，不需要本地 server。
+StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A 股、场内 ETF 和港股自选股。它使用原生 SwiftUI 构建，App 直接访问行情接口，不需要本地 server。
 
 ## 功能
 
 - 菜单栏小窗口，不显示 Dock 图标。
 - 支持自选股分组 tab，可新增、删除分组，并自定义分组名称。
-- 支持在当前分组内添加、删除、拖拽排序股票。
-- 支持代码添加，例如 `700`、`00700`、`HK.00700`、`600519`、`SZ.000001`。
+- 支持在当前分组内添加、删除、拖拽排序股票和场内 ETF。
+- 支持代码添加，例如 `700`、`00700`、`HK.00700`、`600519`、`SZ.000001`、`510300`、`159915`。
 - 支持中文名称搜索联想，点击建议项即可加入当前分组。
 - 行内展示名称、代码、价格、涨跌幅和当天迷你走势线。
-- 支持配置 Infoway API key 获取港股实时行情；未配置或失败时自动降级腾讯港股延时行情。
-- 顶部工具栏可直接修改 Infoway API key，保存后立即生效。
+- 支持配置 Longbridge OpenAPI 凭证，通过全局 WebSocket 长连接订阅港股实时行情；未配置或失败时自动降级腾讯港股延时行情。
+- 顶部工具栏可直接修改 Longbridge App Key、App Secret 和 Access Token，保存后立即生效。
 - 自动刷新会按 A 股和港股交易时段运行，非交易时段暂停行情请求。
 - 默认开启低调模式，涨跌和走势颜色使用灰度。
 - 首次启动默认自选：腾讯控股、贵州茅台、平安银行。
@@ -62,7 +62,7 @@ Sources/StockWatch
   WatchlistView.swift          主窗口 UI
   StockRowView.swift           单行股票展示
   WatchlistStore.swift         分组、持久化、刷新、添加/删除逻辑
-  QuoteProvider.swift          腾讯行情获取和解析
+  QuoteProvider.swift          腾讯/Longbridge 行情获取和解析
   SymbolSearchProvider.swift   腾讯股票搜索联想
   IntradayTrendProvider.swift  腾讯当天走势数据获取
   IntradayTrendView.swift      迷你走势线渲染
@@ -76,36 +76,40 @@ Tests/StockWatchTests      股票代码/名称规范化和交易时段测试
 
 StockWatch 在 App 内直接访问行情接口：
 
-- A 股报价：腾讯公开行情 `https://qt.gtimg.cn/q=...`
-- 港股报价：优先 Infoway `https://data.infoway.io/stock/...`，未配置 key 或请求失败时降级腾讯公开行情。
+- A 股股票/场内 ETF 报价：腾讯公开行情 `https://qt.gtimg.cn/q=...`
+- 港股报价：优先 Longbridge OpenAPI WebSocket 长连接订阅所有分组里的港股，未配置凭证或连接失败时降级腾讯公开行情。
 - 搜索联想：腾讯 `https://smartbox.gtimg.cn/s3/?q=...&t=all`
 - 当天走势：腾讯 `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=...`
 
 这些接口适合个人观察使用，不建议用于自动交易或商业行情分发。
 
-## Infoway 配置
+## Longbridge 配置
 
-港股行情通过 Infoway API key 启用。StockWatch 会按以下顺序读取 key：
+港股实时行情通过 Longbridge OpenAPI 启用。StockWatch 会按以下顺序读取凭证：
 
-1. `UserDefaults` 的 `infoway.apiKey`。
-2. 环境变量 `INFOWAY_API_KEY`。
-3. `~/Library/Application Support/StockWatch/infoway-api-key.txt`。
+1. `UserDefaults` 的 `longbridge.appKey`、`longbridge.appSecret`、`longbridge.accessToken`。
+2. 环境变量 `LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN`。
 
-打包 App 内可点击顶部工具栏的齿轮按钮修改 key。
+打包 App 内可点击顶部工具栏的齿轮按钮修改凭证。
 
 开发运行可使用：
 
 ```bash
-INFOWAY_API_KEY="你的 key" swift run StockWatch
+LONGBRIDGE_APP_KEY="你的 App Key" \
+LONGBRIDGE_APP_SECRET="你的 App Secret" \
+LONGBRIDGE_ACCESS_TOKEN="你的 Access Token" \
+swift run StockWatch
 ```
 
 也可用命令写入 `UserDefaults`：
 
 ```bash
-defaults write local.stockwatch.menu infoway.apiKey "你的 key"
+defaults write local.stockwatch.menu longbridge.appKey "你的 App Key"
+defaults write local.stockwatch.menu longbridge.appSecret "你的 App Secret"
+defaults write local.stockwatch.menu longbridge.accessToken "你的 Access Token"
 ```
 
-不配置 key 时，港股报价会自动降级到腾讯公开延时行情。
+不配置 Longbridge 凭证时，港股报价会自动降级到腾讯公开延时行情。
 
 ## 持久化
 
@@ -121,9 +125,9 @@ defaults write local.stockwatch.menu infoway.apiKey "你的 key"
 
 ## 刷新规则
 
-后台自动刷新只在当前分组股票所属市场的交易窗口内请求行情。混合 A 股/港股分组里，只刷新当前仍在交易窗口内的市场；手动点击刷新按钮仍会立即请求全部当前分组股票。
+后台自动刷新只在当前分组股票所属市场的交易窗口内请求行情。混合 A 股/港股分组里，只刷新当前仍在交易窗口内的市场；Longbridge 港股长连接也会按港股交易窗口自动连接和断开。手动点击刷新按钮仍会立即请求全部当前分组股票。
 
-- A 股：工作日 `09:15-11:35`、`12:55-15:10`。
+- A 股和场内 ETF：工作日 `09:15-11:35`、`12:55-15:10`。
 - 港股：工作日 `09:15-12:05`、`12:55-16:15`。
 - 非交易窗口不请求行情接口，只做低频本地时间检查。
 
@@ -133,7 +137,7 @@ defaults write local.stockwatch.menu infoway.apiKey "你的 key"
 
 - 保持 UI 紧凑、低调，定位是工作电脑上的一眼观察工具。
 - 除非有明确需求，不要重新引入 Python、AKShare 或本地 HTTP server。
-- 修改行情接口解析时，要同时验证 A 股和港股；港股要覆盖 Infoway 和腾讯降级路径。
+- 修改行情接口解析时，要同时验证 A 股和港股；港股要覆盖 Longbridge 和腾讯降级路径。
 - 修改持久化 key 时，要保留对已有用户数据的迁移。
 
 ## 后续计划

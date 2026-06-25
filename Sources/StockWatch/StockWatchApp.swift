@@ -12,7 +12,7 @@ struct StockWatchApp: App {
             WatchlistView()
                 .environmentObject(store)
                 .frame(width: 318)
-                .frame(minHeight: 320)
+                .frame(height: 320)
                 .task {
                     store.start()
                 }

@@ -33,6 +33,16 @@ import Testing
     #expect(SymbolNormalizer.normalize("盛新锂能")?.id == "SZ.002240")
 }
 
+@Test func normalizesExchangeTradedFunds() async throws {
+    #expect(SymbolNormalizer.normalize("510300")?.id == "SH.510300")
+    #expect(SymbolNormalizer.normalize("588000")?.id == "SH.588000")
+    #expect(SymbolNormalizer.normalize("159915")?.id == "SZ.159915")
+    #expect(SymbolNormalizer.normalize("161725")?.id == "SZ.161725")
+    #expect(SymbolNormalizer.normalize("科创50ETF")?.id == "SH.588000")
+    #expect(SymbolNormalizer.normalize("创业板ETF")?.id == "SZ.159915")
+    #expect(SymbolNormalizer.normalize("白酒LOF")?.id == "SZ.161725")
+}
+
 @Test func ashareRefreshWindowKeepsOpeningAndClosingBuffers() async throws {
     let symbol = StockSymbol(market: .shanghai, code: "600519", name: "贵州茅台")
 

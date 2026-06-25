@@ -51,6 +51,12 @@ public struct Candle: Codable, Hashable, Sendable {
     }
 }
 
+public enum QuoteSource: String, Codable, Hashable, Sendable {
+    case tencent
+    case longbridge
+    case mock
+}
+
 public struct Quote: Codable, Hashable, Identifiable, Sendable {
     public var symbol: StockSymbol
     public var price: Double
@@ -58,6 +64,7 @@ public struct Quote: Codable, Hashable, Identifiable, Sendable {
     public var changePercent: Double
     public var candles: [Candle]
     public var updatedAt: Date
+    public var source: QuoteSource
 
     public var id: String {
         symbol.id
@@ -69,7 +76,8 @@ public struct Quote: Codable, Hashable, Identifiable, Sendable {
         change: Double,
         changePercent: Double,
         candles: [Candle],
-        updatedAt: Date
+        updatedAt: Date,
+        source: QuoteSource
     ) {
         self.symbol = symbol
         self.price = price
@@ -77,6 +85,7 @@ public struct Quote: Codable, Hashable, Identifiable, Sendable {
         self.changePercent = changePercent
         self.candles = candles
         self.updatedAt = updatedAt
+        self.source = source
     }
 }
 
