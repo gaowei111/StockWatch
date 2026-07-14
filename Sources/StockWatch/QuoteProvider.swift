@@ -416,6 +416,7 @@ final class LongbridgeQuoteStream {
     private var symbolsByLongbridgeID: [String: StockSymbol] = [:]
     private var lastQuotes: [String: Quote] = [:]
     private var isConnected = false
+    private let keepAliveInterval = Duration.seconds(30)
 
     func update(symbols newSymbols: [StockSymbol]) {
         let hongKongSymbols = Array(
@@ -512,9 +513,45 @@ final class LongbridgeQuoteStream {
         try await subscribe(symbols: longbridgeSymbols, from: task)
         setConnected(true)
 
+        let keepAliveTask = Task { [weak self] in
+            await self?.keepAlive(task)
+        }
+        defer {
+            keepAliveTask.cancel()
+        }
+
         while !Task.isCancelled {
             let message = try await task.receive()
             try handle(message)
+        }
+    }
+
+    private func keepAlive(_ task: URLSessionWebSocketTask) async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: keepAliveInterval)
+                try Task.checkCancellation()
+                try await sendPing(to: task)
+            } catch {
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                task.cancel(with: .goingAway, reason: nil)
+                return
+            }
+        }
+    }
+
+    private func sendPing(to task: URLSessionWebSocketTask) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            task.sendPing { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
         }
     }
 

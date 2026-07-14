@@ -10,7 +10,7 @@ StockWatch 是一个低存在感的 macOS 菜单栏股票观察小窗，面向 A
 - 支持代码添加，例如 `700`、`00700`、`HK.00700`、`600519`、`SZ.000001`、`510300`、`159915`。
 - 支持中文名称搜索联想，点击建议项即可加入当前分组。
 - 行内展示名称、代码、价格、涨跌幅和当天迷你走势线。
-- 支持配置 Longbridge OpenAPI 凭证，通过全局 WebSocket 长连接订阅港股实时行情；未配置或失败时自动降级腾讯港股延时行情。
+- 支持配置 Longbridge OpenAPI 凭证，通过全局 WebSocket 长连接订阅港股实时行情；连接短暂中断时自动重连，未配置凭证时使用腾讯港股延时行情。
 - 顶部工具栏可直接修改 Longbridge App Key、App Secret 和 Access Token，保存后立即生效。
 - 自动刷新会按 A 股和港股交易时段运行，非交易时段暂停行情请求。
 - 默认开启低调模式，涨跌和走势颜色使用灰度。
@@ -77,7 +77,7 @@ Tests/StockWatchTests      股票代码/名称规范化和交易时段测试
 StockWatch 在 App 内直接访问行情接口：
 
 - A 股股票/场内 ETF 报价：腾讯公开行情 `https://qt.gtimg.cn/q=...`
-- 港股报价：优先 Longbridge OpenAPI WebSocket 长连接订阅所有分组里的港股，未配置凭证或连接失败时降级腾讯公开行情。
+- 港股报价：配置凭证后由一条全局 Longbridge OpenAPI WebSocket 长连接订阅所有分组里的港股，并通过 Ping 保活、断线自动重连；未配置凭证时使用腾讯公开延时行情。
 - 搜索联想：腾讯 `https://smartbox.gtimg.cn/s3/?q=...&t=all`
 - 当天走势：腾讯 `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=...`
 
@@ -125,7 +125,7 @@ defaults write local.stockwatch.menu longbridge.accessToken "你的 Access Token
 
 ## 刷新规则
 
-后台自动刷新只在当前分组股票所属市场的交易窗口内请求行情。混合 A 股/港股分组里，只刷新当前仍在交易窗口内的市场；Longbridge 港股长连接也会按港股交易窗口自动连接和断开。手动点击刷新按钮仍会立即请求全部当前分组股票。
+后台自动刷新只在当前分组股票所属市场的交易窗口内请求行情。混合 A 股/港股分组里，只刷新当前仍在交易窗口内的市场；Longbridge 港股长连接也会按港股交易窗口自动连接和断开。手动点击刷新按钮会立即刷新可轮询标的；已配置 Longbridge 的港股断线时会立即重启全局长连接。
 
 - A 股和场内 ETF：工作日 `09:15-11:35`、`12:55-15:10`。
 - 港股：工作日 `09:15-12:05`、`12:55-16:15`。

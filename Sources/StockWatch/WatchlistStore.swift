@@ -100,6 +100,12 @@ final class WatchlistStore: ObservableObject {
     }
 
     func refresh() async {
+        if LongbridgeConfiguration.hasEffectiveCredentials,
+           !isLongbridgeStreamConnected,
+           symbols.contains(where: { $0.market == .hongKong }) {
+            longbridgeStream.restart()
+        }
+
         await refresh(symbolsToRefresh: symbols, replaceAll: true)
     }
 
@@ -367,7 +373,14 @@ final class WatchlistStore: ObservableObject {
     }
 
     private func shouldPollQuote(_ symbol: StockSymbol) -> Bool {
-        symbol.market != .hongKong || !isLongbridgeStreamConnected
+        guard symbol.market == .hongKong else {
+            return true
+        }
+
+        // A configured account must have only one quote socket. Starting a
+        // one-off Longbridge request here can race the stream reconnect and
+        // cause the server to reject both as duplicate connections.
+        return !LongbridgeConfiguration.hasEffectiveCredentials
     }
 
     private var currentGroupIndex: Int? {
@@ -422,8 +435,8 @@ final class WatchlistStore: ObservableObject {
             return quotes[symbol.id]?.source
         })
 
-        if isLongbridgeStreamConnected, LongbridgeConfiguration.hasEffectiveCredentials {
-            quoteSourceStatusText = "港股 Longbridge"
+        if LongbridgeConfiguration.hasEffectiveCredentials {
+            quoteSourceStatusText = isLongbridgeStreamConnected ? "港股 Longbridge" : "港股重连中"
         } else if hongKongSources.contains(.longbridge), !hongKongSources.contains(.tencent) {
             quoteSourceStatusText = "港股 Longbridge"
         } else if hongKongSources.contains(.longbridge), hongKongSources.contains(.tencent) {
